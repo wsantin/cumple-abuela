@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎂 Cumpleaños de MIMI - Organizador Familiar</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Fredoka+One&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Nunito', sans-serif; background: #FFF8F0; }
+  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+  .family-card { transition: all 0.3s ease; cursor: pointer; }
+  .family-card:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.12) !important; }
+  .member-pill { animation: fadeIn 0.3s ease; }
+  .tab-btn { transition: all 0.2s; border: none; cursor: pointer; padding: 10px 20px; border-radius: 25px; font-family: 'Nunito', sans-serif; font-weight: 700; font-size: 14px; }
+  .tab-btn:hover { transform: scale(1.03); }
+  input, textarea { font-family: 'Nunito', sans-serif; }
+  .contrib-input { border: 2px solid #E8DDD0; border-radius: 10px; padding: 8px 12px; font-size: 14px; width: 100%; box-sizing: border-box; transition: border-color 0.2s; outline: none; }
+  .contrib-input:focus { border-color: #E8943A; }
+  .stat-card { background: white; border-radius: 16px; padding: 16px 20px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+  .confirm-btn { border: none; padding: 10px 24px; border-radius: 25px; font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.2s; font-family: 'Nunito'; }
+  .confirm-btn:hover { transform: scale(1.05); }
+  .report-row { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #F0E8DD; align-items: center; }
+  .report-row:last-child { border-bottom: none; }
+  .flag { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 20px solid; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ==================== CONFIGURACIÓN DE API ====================
+// IMPORTANTE: Reemplazar con tu URL de deployment de Google Apps Script
+// Obtén esta URL después de hacer Deploy > New deployment > Web app
+const GOOGLE_SCRIPT_URL = 'YOUR_GOOGLE_SCRIPT_DEPLOYMENT_URL_HERE';
+
+// Servicio API para comunicación con Google Sheets
+const api = {
+  // Cargar todos los datos
+  load: async () => {
+    try {
+      const response = await fetch(`${GOOGLE_SCRIPT_URL}?action=getAll`);
+      if (!response.ok) throw new Error('Network response was not ok');
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error loading data:', error);
+      throw error;
+    }
+  },
+
+  // Guardar todos los datos (full sync)
+  saveAll: async (families, data) => {
+    try {
+      // IMPORTANTE: Usar mode: 'no-cors' para Web App pública
+      await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'saveAll',
+          families: families,
+          data: data
+        })
+      });
+      // Nota: no-cors mode no permite leer response, asumimos éxito
+      return { success: true };
+    } catch (error) {
+      console.error('Error saving data:', error);
+      throw error;
+    }
+  },
+
+  // Debounced save para prevenir llamadas API excesivas
+  debouncedSave: null,
+  scheduleSave: function(families, data) {
+    if (this.debouncedSave) clearTimeout(this.debouncedSave);
+    this.debouncedSave = setTimeout(() => {
+      this.saveAll(families, data).catch(err => {
+        console.error('Auto-save failed:', err);
+      });
+    }, 1000); // 1 segundo de debounce
+  }
+};
+
+const INITIAL_FAMILIES = [
+  { id: "gustavo", name: "Gustavo", color: "#2B9E8F", emoji: "🌿" },
+  { id: "lalo", name: "Lalo", color: "#3B82C4", emoji: "🎈" },
+  { id: "pola", name: "Pola", color: "#E05A6D", emoji: "🌸" },
+  { id: "mariella", name: "Mariella", color: "#C74B7A", emoji: "🎀" },
+  { id: "wilson", name: "Wilson", color: "#E8943A", emoji: "🔥" },
+  { id: "gerson", name: "Gerson", color: "#D4882E", emoji: "⭐" },
+  { id: "tia_china", name: "Tía China", color: "#6BA3C7", emoji: "💎" },
+];
+
+const EXTRA_COLORS = ["#8B5CF6","#06B6D4","#84CC16","#F43F5E","#A855F7","#14B8A6","#F97316","#6366F1","#EC4899","#10B981","#EAB308","#0EA5E9"];
+const EXTRA_EMOJIS = ["🌟","🎪","🌺","🦋","🍀","🎵","🌈","🎯","💫","🌻","🎶","🏠","❤️","🌙","🎭","🦜"];
+
+const CONTRIBUTION_TYPES = [
+  { id: "money", label: "💰 Económico (S/)", type: "number" },
+  { id: "food", label: "🍗 Comida", type: "text" },
+  { id: "drinks", label: "🥤 Bebidas", type: "text" },
+  { id: "snacks", label: "🍿 Snacks", type: "text" },
+  { id: "dessert", label: "🎂 Postre/Torta", type: "text" },
+  { id: "decoration", label: "🎊 Decoración", type: "text" },
+  { id: "transport", label: "🚗 Transporte", type: "text" },
+  { id: "other", label: "📦 Otro", type: "text" },
+];
+
+const buildDefaultData = (families) => families.reduce((acc, fh) => {
+  acc[fh.id] = { members: [], contributions: {}, confirmed: false, notes: "" };
+  return acc;
+}, {});
+
+// Storage helpers using localStorage
+const storage = {
+  get: (key) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set: (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} },
+  del: (key) => { try { localStorage.removeItem(key); } catch {} },
+};
+
+function App() {
+  // Estados principales
+  const [familyHeads, setFamilyHeads] = useState([]);
+  const [data, setData] = useState({});
+  const [showAddFamily, setShowAddFamily] = useState(false);
+  const [newFamilyName, setNewFamilyName] = useState("");
+  const [newFamilyEmoji, setNewFamilyEmoji] = useState("🌟");
+  const [expandedFamily, setExpandedFamily] = useState(null);
+  const [newMember, setNewMember] = useState("");
+  const [activeTab, setActiveTab] = useState("organizar");
+
+  // Estados para sincronización con API
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
+
+  const eventConfig = { grandmaName: "MIMI", eventDate: "20/02/2026", location: "Campestre" };
+
+  // Cargar datos al montar componente
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Si GOOGLE_SCRIPT_URL no está configurado, usar datos locales
+        if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_SCRIPT_DEPLOYMENT_URL_HERE') {
+          console.warn('⚠️ GOOGLE_SCRIPT_URL no configurado. Usando localStorage como fallback.');
+          const savedFamilies = storage.get("cumple-families") || INITIAL_FAMILIES;
+          const savedData = storage.get("cumple-data") || buildDefaultData(savedFamilies);
+          setFamilyHeads(savedFamilies);
+          setData(savedData);
+          setLoading(false);
+          return;
+        }
+
+        const result = await api.load();
+
+        if (result.families && result.families.length > 0) {
+          setFamilyHeads(result.families);
+          setData(result.data);
+        } else {
+          // Si el sheet está vacío, inicializar con datos por defecto
+          console.log('Sheet vacío, inicializando con datos por defecto...');
+          setFamilyHeads(INITIAL_FAMILIES);
+          const defaultData = buildDefaultData(INITIAL_FAMILIES);
+          setData(defaultData);
+          // Guardar datos iniciales en el sheet
+          await api.saveAll(INITIAL_FAMILIES, defaultData);
+        }
+      } catch (err) {
+        console.error('Error cargando datos:', err);
+        setError('Error al cargar los datos. Usando datos locales como respaldo.');
+        // Fallback a localStorage
+        const savedFamilies = storage.get("cumple-families") || INITIAL_FAMILIES;
+        const savedData = storage.get("cumple-data") || buildDefaultData(savedFamilies);
+        setFamilyHeads(savedFamilies);
+        setData(savedData);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Función de auto-guardado con debounce
+  const autoSave = useCallback((newData, newFamilies) => {
+    const dataToSave = newData || data;
+    const familiesToSave = newFamilies || familyHeads;
+
+    // Si GOOGLE_SCRIPT_URL no está configurado, guardar en localStorage
+    if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_SCRIPT_DEPLOYMENT_URL_HERE') {
+      storage.set("cumple-data", dataToSave);
+      if (newFamilies) storage.set("cumple-families", familiesToSave);
+      return;
+    }
+
+    // Usar debounced save para API
+    api.scheduleSave(familiesToSave, dataToSave);
+    setLastSaved(new Date());
+  }, [data, familyHeads]);
+
+  // Función de guardado manual (para operaciones críticas)
+  const save = async (newData, newFamilies) => {
+    const dataToSave = newData || data;
+    const familiesToSave = newFamilies || familyHeads;
+
+    // Si GOOGLE_SCRIPT_URL no está configurado, guardar en localStorage
+    if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_SCRIPT_DEPLOYMENT_URL_HERE') {
+      storage.set("cumple-data", dataToSave);
+      if (newFamilies) storage.set("cumple-families", familiesToSave);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await api.saveAll(familiesToSave, dataToSave);
+      setLastSaved(new Date());
+    } catch (err) {
+      console.error('Save error:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addFamily = () => {
+    if (!newFamilyName.trim()) return;
+    const id = newFamilyName.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "") + "_" + Date.now();
+    const colorIndex = familyHeads.length % EXTRA_COLORS.length;
+    const newFH = { id, name: newFamilyName.trim(), color: EXTRA_COLORS[colorIndex], emoji: newFamilyEmoji };
+    const updatedFamilies = [...familyHeads, newFH];
+    const newData = { ...data, [id]: { members: [], contributions: {}, confirmed: false, notes: "" } };
+    setFamilyHeads(updatedFamilies);
+    setData(newData);
+    setNewFamilyName("");
+    setNewFamilyEmoji("🌟");
+    setShowAddFamily(false);
+    autoSave(newData, updatedFamilies);
+  };
+
+  const removeFamily = (familyId) => {
+    if (!confirm("¿Seguro que deseas eliminar esta familia y todos sus datos?")) return;
+    const updatedFamilies = familyHeads.filter((f) => f.id !== familyId);
+    const newData = { ...data };
+    delete newData[familyId];
+    setFamilyHeads(updatedFamilies);
+    setData(newData);
+    if (expandedFamily === familyId) setExpandedFamily(null);
+    autoSave(newData, updatedFamilies);
+  };
+
+  const updateFamily = (familyId, update) => {
+    const newData = { ...data, [familyId]: { ...data[familyId], ...update } };
+    setData(newData);
+    autoSave(newData);
+  };
+
+  const addMember = (familyId) => {
+    if (!newMember.trim()) return;
+    const family = data[familyId];
+    const members = [...family.members, { name: newMember.trim(), id: Date.now() }];
+    const newData = { ...data, [familyId]: { ...data[familyId], members } };
+    setData(newData);
+    autoSave(newData);
+    setNewMember("");
+  };
+
+  const removeMember = (familyId, memberId) => {
+    const members = data[familyId].members.filter((m) => m.id !== memberId);
+    const newData = { ...data, [familyId]: { ...data[familyId], members } };
+    setData(newData);
+    autoSave(newData);
+  };
+
+  const setContribution = (familyId, type, value) => {
+    const contributions = { ...data[familyId].contributions, [type]: value };
+    const newData = { ...data, [familyId]: { ...data[familyId], contributions } };
+    setData(newData);
+    autoSave(newData);
+  };
+
+  const totalPeople = Object.values(data).reduce((s, f) => s + f.members.length, 0);
+  const confirmedFamilies = Object.values(data).filter((f) => f.confirmed).length;
+  const totalMoney = Object.values(data).reduce((s, f) => s + (parseFloat(f.contributions.money) || 0), 0);
+
+  const allContributions = CONTRIBUTION_TYPES.filter((t) => t.id !== "money").map((t) => {
+    const items = Object.entries(data)
+      .filter(([, f]) => f.contributions[t.id])
+      .map(([id, f]) => ({
+        family: (familyHeads.find((fh) => fh.id === id) || { name: id }).name,
+        value: f.contributions[t.id],
+      }));
+    return { ...t, items };
+  });
+
+  const resetAll = () => {
+    if (confirm("¿Seguro que deseas borrar TODOS los datos? Esta acción no se puede deshacer.")) {
+      const resetFamilies = INITIAL_FAMILIES;
+      const resetData = buildDefaultData(INITIAL_FAMILIES);
+      setFamilyHeads(resetFamilies);
+      setData(resetData);
+      storage.del("cumple-data");
+      storage.del("cumple-families");
+      save(resetData, resetFamilies); // Usar save directo para reset
+    }
+  };
+
+  // Loading state
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FFF8F0" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16, animation: "bounce 1s infinite" }}>🎂</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#2B9E8F" }}>Cargando datos...</div>
+          <div style={{ fontSize: 13, color: "#A0896E", marginTop: 8 }}>Sincronizando con Google Sheets</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state (muestra mensaje pero permite continuar con datos locales)
+  const errorBanner = error ? (
+    <div style={{ background: "#FEF3C7", borderBottom: "2px solid #FDE68A", padding: "12px 20px", textAlign: "center" }}>
+      <span style={{ fontSize: 13, color: "#92400E", fontWeight: 600 }}>⚠️ {error}</span>
+    </div>
+  ) : null;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #FFF8F0 0%, #FFF0E0 50%, #FFEBD2 100%)", fontFamily: "'Nunito', sans-serif", padding: "0 0 40px" }}>
+
+      {errorBanner}
+
+      {/* HEADER */}
+      <div style={{ background: "linear-gradient(135deg, #2B9E8F 0%, #3B82C4 50%, #E05A6D 100%)", padding: "28px 20px 24px", textAlign: "center", position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, opacity: 0.1, backgroundImage: "radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px), radial-gradient(circle at 60% 80%, white 1px, transparent 1px)", backgroundSize: "60px 60px, 40px 40px, 80px 80px" }} />
+        <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+          {["#E05A6D","#E8943A","#2B9E8F","#3B82C4","#C74B7A","#E8943A","#2B9E8F","#E05A6D","#3B82C4","#C74B7A","#E8943A","#2B9E8F"].map((c,i) => (
+            <div key={i} className="flag" style={{ borderTopColor: c, opacity: 0.8 }} />
+          ))}
+        </div>
+        <div style={{ fontSize: 40, marginBottom: 4 }}>🎉🎂🎉</div>
+        <h1 style={{ fontFamily: "'Fredoka One', cursive", color: "white", fontSize: 26, margin: "4px 0", textShadow: "0 2px 8px rgba(0,0,0,0.2)", letterSpacing: 1 }}>
+          Cumpleaños de {eventConfig.grandmaName}
+        </h1>
+        <p style={{ color: "rgba(255,255,255,0.9)", fontSize: 14, margin: "2px 0 0" }}>
+          📅 {eventConfig.eventDate} &nbsp;·&nbsp; 📍 {eventConfig.location}
+        </p>
+
+        {/* Save indicator */}
+        {saving && (
+          <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.3)", padding: "6px 12px", borderRadius: 20, fontSize: 11, color: "white", fontWeight: 600 }}>
+            💾 Guardando...
+          </div>
+        )}
+        {lastSaved && !saving && GOOGLE_SCRIPT_URL !== 'YOUR_GOOGLE_SCRIPT_DEPLOYMENT_URL_HERE' && (
+          <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.3)", padding: "6px 12px", borderRadius: 20, fontSize: 11, color: "white", fontWeight: 600 }}>
+            ✓ Guardado {lastSaved.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+          </div>
+        )}
+        {GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_SCRIPT_DEPLOYMENT_URL_HERE' && (
+          <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.2)", padding: "6px 12px", borderRadius: 20, fontSize: 11, color: "white", fontWeight: 600 }}>
+            📱 Modo Local
+          </div>
+        )}
+      </div>
+
+      {/* TABS */}
+      <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: "16px 16px 8px", flexWrap: "wrap" }}>
+        {[
+          { id: "organizar", label: "👨‍👩‍👧‍👦 Familias" },
+          { id: "reporte", label: "📊 Reporte" },
+        ].map((t) => (
+          <button key={t.id} className="tab-btn" onClick={() => setActiveTab(t.id)}
+            style={{ background: activeTab === t.id ? "#2B9E8F" : "white", color: activeTab === t.id ? "white" : "#6B5B4E", boxShadow: activeTab === t.id ? "0 4px 15px rgba(43,158,143,0.35)" : "0 2px 8px rgba(0,0,0,0.06)" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ maxWidth: 680, margin: "0 auto", padding: "8px 16px" }}>
+
+        {/* ORGANIZAR TAB */}
+        {activeTab === "organizar" && (
+          <div style={{ animation: "fadeIn 0.4s ease" }}>
+            {/* Quick Stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, margin: "12px 0 16px" }}>
+              <div className="stat-card">
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#2B9E8F" }}>{totalPeople}</div>
+                <div style={{ fontSize: 11, color: "#8B7355", fontWeight: 700 }}>Asistentes</div>
+              </div>
+              <div className="stat-card">
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#3B82C4" }}>{confirmedFamilies}/{familyHeads.length}</div>
+                <div style={{ fontSize: 11, color: "#8B7355", fontWeight: 700 }}>Confirmados</div>
+              </div>
+              <div className="stat-card">
+                <div style={{ fontSize: 28, fontWeight: 900, color: "#E8943A" }}>S/{totalMoney}</div>
+                <div style={{ fontSize: 11, color: "#8B7355", fontWeight: 700 }}>Recaudado</div>
+              </div>
+            </div>
+
+            <p style={{ textAlign: "center", color: "#A0896E", fontSize: 13, margin: "0 0 12px" }}>
+              👇 Toca cada familia para registrar asistentes y aportes
+            </p>
+
+            {/* Family Cards */}
+            {familyHeads.map((fh) => {
+              const family = data[fh.id] || { members: [], contributions: {}, confirmed: false, notes: "" };
+              const isExpanded = expandedFamily === fh.id;
+              return (
+                <div key={fh.id} style={{ marginBottom: 12, animation: "fadeIn 0.4s ease" }}>
+                  <div className="family-card" onClick={() => setExpandedFamily(isExpanded ? null : fh.id)}
+                    style={{ background: "white", borderRadius: 16, padding: "16px 20px", boxShadow: "0 3px 15px rgba(0,0,0,0.07)", borderLeft: `5px solid ${fh.color}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 44, height: 44, borderRadius: 14, background: `${fh.color}18`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{fh.emoji}</div>
+                      <div>
+                        <div style={{ fontWeight: 800, color: fh.color, fontSize: 16 }}>Familia {fh.name}</div>
+                        <div style={{ fontSize: 12, color: "#A0896E" }}>
+                          {family.members.length} persona{family.members.length !== 1 ? "s" : ""}
+                          {family.contributions.money ? ` · S/${family.contributions.money}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {family.confirmed && <span className="badge" style={{ background: "#D1FAE5", color: "#065F46" }}>✓ OK</span>}
+                      <span style={{ fontSize: 18, color: "#C4B5A0", transition: "transform 0.3s", transform: isExpanded ? "rotate(180deg)" : "rotate(0)" }}>▼</span>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div style={{ background: "white", borderRadius: "0 0 16px 16px", padding: 20, marginTop: -8, boxShadow: "0 3px 15px rgba(0,0,0,0.05)", borderLeft: `5px solid ${fh.color}20`, animation: "fadeIn 0.3s ease" }}>
+
+                      {/* Members */}
+                      <div style={{ marginBottom: 20 }}>
+                        <h4 style={{ color: "#6B5B4E", fontSize: 14, margin: "0 0 10px", fontWeight: 800 }}>👥 ¿Quiénes asisten?</h4>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                          {family.members.map((m) => (
+                            <div key={m.id} className="member-pill" style={{ background: `${fh.color}12`, border: `1.5px solid ${fh.color}40`, borderRadius: 25, padding: "6px 14px", fontSize: 13, fontWeight: 600, color: fh.color, display: "flex", alignItems: "center", gap: 6 }}>
+                              {m.name}
+                              <span onClick={(e) => { e.stopPropagation(); removeMember(fh.id, m.id); }} style={{ cursor: "pointer", opacity: 0.6, fontSize: 16, lineHeight: 1 }}>×</span>
+                            </div>
+                          ))}
+                          {family.members.length === 0 && <span style={{ color: "#C4B5A0", fontSize: 13, fontStyle: "italic" }}>Sin asistentes registrados</span>}
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input className="contrib-input" placeholder="Nombre del familiar..." value={expandedFamily === fh.id ? newMember : ""} onChange={(e) => setNewMember(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && addMember(fh.id)} style={{ flex: 1 }} />
+                          <button onClick={() => addMember(fh.id)} style={{ background: fh.color, color: "white", border: "none", borderRadius: 10, padding: "8px 16px", fontWeight: 800, cursor: "pointer", fontSize: 18, fontFamily: "'Nunito'" }}>+</button>
+                        </div>
+                      </div>
+
+                      {/* Contributions */}
+                      <div style={{ marginBottom: 20 }}>
+                        <h4 style={{ color: "#6B5B4E", fontSize: 14, margin: "0 0 10px", fontWeight: 800 }}>🎁 ¿Qué pueden aportar?</h4>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          {CONTRIBUTION_TYPES.map((ct) => (
+                            <div key={ct.id}>
+                              <label style={{ fontSize: 12, fontWeight: 700, color: "#8B7355", display: "block", marginBottom: 4 }}>{ct.label}</label>
+                              <input className="contrib-input" type={ct.type} placeholder={ct.type === "number" ? "0" : "Detalle..."} value={family.contributions[ct.id] || ""} onChange={(e) => setContribution(fh.id, ct.id, e.target.value)} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Notes */}
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: "#8B7355", display: "block", marginBottom: 4 }}>📝 Notas adicionales</label>
+                        <textarea className="contrib-input" rows={2} placeholder="Ej: Solo pueden ir en la tarde, necesitan transporte..." value={family.notes} onChange={(e) => updateFamily(fh.id, { notes: e.target.value })} style={{ resize: "vertical" }} />
+                      </div>
+
+                      {/* Confirm & Delete */}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button className="confirm-btn" onClick={() => updateFamily(fh.id, { confirmed: !family.confirmed })}
+                          style={{ background: family.confirmed ? "#D1FAE5" : `${fh.color}15`, color: family.confirmed ? "#065F46" : fh.color, flex: 1 }}>
+                          {family.confirmed ? "✅ Confirmada" : "Confirmar asistencia"}
+                        </button>
+                        <button className="confirm-btn" onClick={() => removeFamily(fh.id)}
+                          style={{ background: "#FEE2E2", color: "#DC2626", minWidth: 44 }} title="Eliminar familia">
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add Family */}
+            {!showAddFamily ? (
+              <button onClick={() => setShowAddFamily(true)}
+                style={{ width: "100%", padding: 16, border: "3px dashed #D4C5B0", borderRadius: 16, background: "transparent", color: "#A0896E", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "'Nunito'", transition: "all 0.2s", marginTop: 4 }}>
+                ➕ Agregar nueva familia
+              </button>
+            ) : (
+              <div style={{ background: "white", borderRadius: 16, padding: 20, boxShadow: "0 3px 15px rgba(0,0,0,0.07)", border: "2px solid #2B9E8F", animation: "fadeIn 0.3s ease", marginTop: 4 }}>
+                <h4 style={{ color: "#2B9E8F", fontSize: 15, margin: "0 0 14px", fontWeight: 800 }}>➕ Nueva Familia</h4>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#8B7355", display: "block", marginBottom: 4 }}>Nombre (cabeza de familia)</label>
+                  <input className="contrib-input" placeholder="Ej: Tío Roberto, Prima Lucy..." value={newFamilyName} onChange={(e) => setNewFamilyName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addFamily()} />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: "#8B7355", display: "block", marginBottom: 6 }}>Elige un ícono</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {EXTRA_EMOJIS.map((e) => (
+                      <button key={e} onClick={() => setNewFamilyEmoji(e)}
+                        style={{ width: 38, height: 38, borderRadius: 10, border: newFamilyEmoji === e ? "2.5px solid #2B9E8F" : "2px solid #E8DDD0", background: newFamilyEmoji === e ? "#D1FAE5" : "white", fontSize: 18, cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={addFamily}
+                    style={{ flex: 1, background: "#2B9E8F", color: "white", border: "none", borderRadius: 12, padding: "10px 20px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito'" }}>
+                    ✓ Agregar Familia
+                  </button>
+                  <button onClick={() => { setShowAddFamily(false); setNewFamilyName(""); }}
+                    style={{ background: "#F5F0EA", color: "#8B7355", border: "none", borderRadius: 12, padding: "10px 16px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito'" }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <button onClick={resetAll} style={{ marginTop: 16, width: "100%", background: "transparent", color: "#C4B5A0", border: "none", padding: 10, fontSize: 12, cursor: "pointer", fontFamily: "'Nunito'", fontWeight: 600 }}>
+              🗑️ Borrar todos los datos y empezar de nuevo
+            </button>
+          </div>
+        )}
+
+        {/* REPORTE TAB */}
+        {activeTab === "reporte" && (
+          <div style={{ animation: "fadeIn 0.4s ease" }}>
+            <div style={{ background: "linear-gradient(135deg, #2B9E8F, #3B82C4)", borderRadius: 20, padding: 24, color: "white", textAlign: "center", margin: "12px 0 16px", boxShadow: "0 4px 20px rgba(43,158,143,0.3)" }}>
+              <div style={{ fontFamily: "'Fredoka One'", fontSize: 22, marginBottom: 12 }}>📊 Resumen General</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
+                <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 14, padding: 14 }}>
+                  <div style={{ fontSize: 32, fontWeight: 900 }}>{totalPeople}</div>
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>Asistentes Total</div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 14, padding: 14 }}>
+                  <div style={{ fontSize: 32, fontWeight: 900 }}>S/{totalMoney}</div>
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>Recaudado</div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 14, padding: 14 }}>
+                  <div style={{ fontSize: 32, fontWeight: 900 }}>{confirmedFamilies}/{familyHeads.length}</div>
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>Familias OK</div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 14, padding: 14 }}>
+                  <div style={{ fontSize: 32, fontWeight: 900 }}>{familyHeads.length}</div>
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>Familias</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Per Family Breakdown */}
+            <div style={{ background: "white", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+              <div style={{ padding: "16px 20px", background: "#FAF5EF", borderBottom: "2px solid #F0E8DD" }}>
+                <h3 style={{ fontFamily: "'Fredoka One'", color: "#6B5B4E", fontSize: 16, margin: 0 }}>👨‍👩‍👧‍👦 Detalle por Familia</h3>
+              </div>
+              {familyHeads.map((fh) => {
+                const family = data[fh.id] || { members: [], contributions: {}, confirmed: false, notes: "" };
+                const hasContrib = Object.values(family.contributions).some((v) => v);
+                return (
+                  <div key={fh.id} className="report-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 16 }}>{fh.emoji}</span>
+                        <span style={{ fontWeight: 800, color: fh.color, fontSize: 14 }}>{fh.name}</span>
+                        <span className="badge" style={{ background: family.confirmed ? "#D1FAE5" : "#FEF3C7", color: family.confirmed ? "#065F46" : "#92400E" }}>
+                          {family.confirmed ? "✓ Confirmado" : "Pendiente"}
+                        </span>
+                      </div>
+                      <span style={{ fontWeight: 700, color: "#6B5B4E", fontSize: 13 }}>{family.members.length} 👤</span>
+                    </div>
+                    {family.members.length > 0 && (
+                      <div style={{ fontSize: 12, color: "#A0896E", paddingLeft: 28 }}>
+                        {family.members.map((m) => m.name).join(", ")}
+                      </div>
+                    )}
+                    {hasContrib && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 28 }}>
+                        {Object.entries(family.contributions).filter(([, v]) => v).map(([key, val]) => {
+                          const ct = CONTRIBUTION_TYPES.find((c) => c.id === key);
+                          return (
+                            <span key={key} className="badge" style={{ background: "#F5F0EA", color: "#6B5B4E", fontSize: 11 }}>
+                              {ct?.label.split(" ")[0]} {key === "money" ? `S/${val}` : val}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {family.notes && <div style={{ fontSize: 11, color: "#C4A882", paddingLeft: 28, fontStyle: "italic" }}>📝 {family.notes}</div>}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Contributions Summary */}
+            <div style={{ background: "white", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+              <div style={{ padding: "16px 20px", background: "#FAF5EF", borderBottom: "2px solid #F0E8DD" }}>
+                <h3 style={{ fontFamily: "'Fredoka One'", color: "#6B5B4E", fontSize: 16, margin: 0 }}>🎁 Resumen de Aportes</h3>
+              </div>
+              <div style={{ padding: "12px 20px", borderBottom: "1px solid #F0E8DD" }}>
+                <div style={{ fontWeight: 800, color: "#E8943A", fontSize: 14, marginBottom: 8 }}>💰 Aportes Económicos</div>
+                {familyHeads.filter((fh) => (data[fh.id]||{contributions:{}}).contributions.money).map((fh) => (
+                  <div key={fh.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 }}>
+                    <span style={{ color: "#6B5B4E" }}>{fh.name}</span>
+                    <span style={{ fontWeight: 700, color: "#2B9E8F" }}>S/{data[fh.id].contributions.money}</span>
+                  </div>
+                ))}
+                {!familyHeads.some((fh) => (data[fh.id]||{contributions:{}}).contributions.money) && (
+                  <span style={{ color: "#C4B5A0", fontSize: 13, fontStyle: "italic" }}>Sin aportes económicos registrados</span>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 0", fontSize: 14, fontWeight: 800, borderTop: "1px dashed #E8DDD0", marginTop: 8 }}>
+                  <span style={{ color: "#6B5B4E" }}>TOTAL</span>
+                  <span style={{ color: "#2B9E8F" }}>S/{totalMoney}</span>
+                </div>
+              </div>
+              {allContributions.filter((c) => c.items.length > 0).map((c) => (
+                <div key={c.id} style={{ padding: "12px 20px", borderBottom: "1px solid #F0E8DD" }}>
+                  <div style={{ fontWeight: 800, color: "#6B5B4E", fontSize: 14, marginBottom: 6 }}>{c.label}</div>
+                  {c.items.map((item, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 13 }}>
+                      <span style={{ color: "#A0896E" }}>{item.family}</span>
+                      <span style={{ color: "#6B5B4E", fontWeight: 600 }}>{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            {/* Pending families */}
+            {familyHeads.filter((fh) => !(data[fh.id]||{}).confirmed).length > 0 && (
+              <div style={{ background: "#FEF3C7", borderRadius: 16, padding: 16, border: "2px solid #FDE68A" }}>
+                <div style={{ fontWeight: 800, color: "#92400E", fontSize: 14, marginBottom: 8 }}>⏳ Familias pendientes por confirmar:</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {familyHeads.filter((fh) => !(data[fh.id]||{}).confirmed).map((fh) => (
+                    <span key={fh.id} className="badge" style={{ background: "white", color: fh.color, border: `2px solid ${fh.color}`, fontWeight: 800, fontSize: 13, padding: "4px 12px" }}>
+                      {fh.emoji} {fh.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {confirmedFamilies === familyHeads.length && familyHeads.length > 0 && (
+              <div style={{ background: "#D1FAE5", borderRadius: 16, padding: 20, textAlign: "center", border: "2px solid #6EE7B7", animation: "pulse 2s infinite" }}>
+                <div style={{ fontSize: 36 }}>🎉</div>
+                <div style={{ fontFamily: "'Fredoka One'", color: "#065F46", fontSize: 18 }}>¡Todas las familias confirmadas!</div>
+                <div style={{ color: "#047857", fontSize: 13, marginTop: 4 }}>La abuela MIMI va a estar feliz 💚</div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
